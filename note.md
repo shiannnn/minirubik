@@ -218,9 +218,9 @@ The largest table covers 153,090 abstract states, 4.2% of the 3,674,160 real sta
 | Gate | Check | Result |
 |---|---|---|
 | H1 | `h(s) ≤ d(s)` for all 3,674,160 states (`stage3.c` reads the packed nibble accessor) | 0 violations |
-| H3 | returned length equals BFS distance and the path reaches solved | 22,872 states (all 2,644 distance-11 states plus about 1 in 180 of the others), 0 wrong |
+| H3 | returned length equals BFS distance and the path reaches solved, for every state (`./stage3 --full`) | 3,674,160 states, 0 wrong, 111.2 s wall clock (gcc -O2, Windows 11) |
 
-H3 is a sample for the non-distance-11 states, not exhaustive. A state can have several shortest solutions, and IDA\* need not pick the one the baseline BFS records. For `43752611332133` the baseline prints `R' D2 R2 D' R D2 B D' R2` and IDA\* prints `R D2 R2 D R D2 B D' R2`. Both are 9 moves and both reach solved.
+H3 is exhaustive: all 3,674,160 states return a path of exactly the BFS length that reaches solved, and since the largest BFS distance is 11 this also shows that no state is deeper. A state can have several shortest solutions, and IDA\* need not pick the one the baseline BFS records. For `43752611332133` the baseline prints `R' D2 R2 D' R D2 B D' R2` and IDA\* prints `R D2 R2 D R D2 B D' R2`. Both are 9 moves and both reach solved.
 
 ### 2.5 Precomputation
 
@@ -256,7 +256,7 @@ Counts are tallied by hand from the C source, per generated node. They are not r
 | Original C (Stage 2 loop: `apply_move`, `heur` with `rank_perm`, `pdb_index`) | ≈ 33 (16 mul + 14 `% 3` + 3 for `m / 3` and `m % 3`) | ≈ 75 | ≈ 115 loads / ≈ 40 stores | ≈ 470 |
 | Optimized C (`stage3.c` search loop) | 0 | ≈ 5 | ≈ 8 loads / ≈ 4 stores | ≈ 45 |
 
-Node counts on the host (same 22,872 states as H3; distance-11 states only below):
+Node counts on the host (distance-11 states only below; both columns come from the exhaustive H3 run for Stage 3 and from `stage2 --bench` for Stage 2):
 
 | | Stage 2 | Stage 3 |
 |---|---|---|
@@ -272,7 +272,7 @@ The measured Stage 4 instruction count may differ from these estimates. If it ex
 
 ### 3.4 C Code
 
-Full source: `stage3.c` (link to the GitHub repository goes here). Key fragments:
+Full source: `stage3.c` in the fork (link to be added once pushed). Key fragments:
 
 ```c
 /* o*210 + l without a multiplier: 210 = 128 + 64 + 16 + 2. */
@@ -452,10 +452,10 @@ gcc -O2 -Wall -o stage2 stage2.c && gcc -O2 -Wall -o stage3 stage3.c
 ### 4.5 Correctness Tests
 | ID | Description | Result |
 |---|---|---|
-| H1 | Heuristic admissibility: h(s) ≤ d(s) over all 3,674,160 states | |
-| H2 | All tables fully populated; maximum value and solved entry checked | |
-| H3 | Search returns the optimal length for every state | |
-| H4 | Packed accessor agrees with unpacked reference | |
+| H1 | Heuristic admissibility: h(s) ≤ d(s) over all 3,674,160 states | PASS: 0 violations; h = d on 415,268 states (`./stage3 --hcheck`) |
+| H2 | All tables fully populated; maximum value and solved entry checked | PASS: PDB 153,090 entries, none unset, max 9, only index 0 (solved) is 0; `onext`/`lnext` rows are permutations with zero padding; both agree with the full 7-cubie model on 3,674,160 × 3 transitions |
+| H3 | Search returns the optimal length for every state | PASS: 3,674,160 states, 0 wrong, 111.2 s (host, `./stage3 --full`) |
+| H4 | Packed accessor agrees with unpacked reference | PASS: 76,545 even + 76,545 odd indices, 0 mismatches |
 | T5 | Applying the returned path reaches the solved state on Ripes | |
 | T6 | `21345671111111` returns an 11-move optimal solution | |
 | T7 | Three test cases reproduce on RV32_ISS and at least one visual pipeline model | |

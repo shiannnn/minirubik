@@ -3,3 +3,6 @@
 *.swp
 solver
 mini
+stage2
+stage3
+*.exe

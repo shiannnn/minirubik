@@ -373,81 +373,120 @@ gcc -O2 -Wall -o stage2 stage2.c && gcc -O2 -Wall -o stage3 stage3.c
 ./stage2 --bench
 ./stage3 --bench
 ```
-## Stage 2: Choose Representation and Algorithm
-
-### 2.1 State Representation
-- Choice and justification against Stage 1 measurements and the 128 KiB budget
-
-### 2.2 Algorithm
-- Candidates: admissible heuristics / pattern databases / iterative deepening
-- Final choice and rationale
-
-### 2.3 Memory Budget
-| Item | Size (bytes) |
-|---|---|
-| Factored transition tables | 34,614 |
-| Heuristic tables | TODO |
-| Other | TODO |
-| **Total (≤ 128 KiB)** | TODO |
-
-### 2.4 Termination and Optimality
-- Termination argument
-- Optimality argument (shortest solution)
-
-### 2.5 Precomputation
-- Tables generated on the host and linked as read-only data
-- Confirm no complete distance table over all 3,674,160 states
-
-## Stage 3: Improve Efficiency in C First
-
-### 3.1 Eliminating Multiply and Divide
-- Index computation (shifts for powers of two; ×3/5/7/9 as shift plus add/subtract)
-- Modulo 3 (orientation sum ≤ 4, single conditional subtract)
-- Branchless modulo (arithmetic-shift mask)
-
-### 3.2 Reducing Branches and Memory Traffic
-- Before/after comparison
-
-### 3.3 Operation Count Analysis
-| Version | Mul/Div | Branches | Loads/Stores | Total ops |
-|---|---|---|---|---|
-| Original C | | | | |
-| Optimized C | | | | |
-
-### 3.4 C Code
-```c
-// TODO
-```
 
 ## Stage 4: Translate to RV32I Assembly
 
+Source: `stage3.s` (one file: code, test data and the generated tables). The state is read from registers given on the Ripes command line, see How to Run. Reference build and measurement scripts: `ref/`, `measure/`, `tools/`.
+
+**Measurement conventions.** Retired instructions come from `Ripes --mode cli --proc RV32_ISS --iret` on Ripes v2.2.6-106-g5b8a616, one state per run (`measure/measure_stage4.ps1` cuts the `cases` table to one entry), so every count is a whole program: start-up, parse, search, replay check, printing, exit. Code size is the `.text` size of the assembled object (`riscv64-unknown-elf-size -A`); there is no renderer, so nothing is compiled out. Static data is the `.data` size of the same object.
+
+### How to Run
+
+Ripes has no stdin and no `argv`, so the cube state is given in registers with `--reginit`. A state is 14 digits `PPPPPPPOOOOOOO`: seven cubie digits 1 to 7 (no repeats), then seven orientation digits 1 to 3 whose sum minus 7 is a multiple of 3. The program expects the first seven digits as a decimal number in `a0` (`gpr:10`) and the last seven as a decimal number in `a1` (`gpr:11`), and turns them back into the 14-character string by subtracting powers of ten (no divide).
+
+Use the Ripes build that has `RV32_ISS` (v2.2.6-106-g5b8a616 here). v2.2.6 has no such model, and its `--reginit` takes the format `<idx>=<value>`.
+
+**Solve one state** (the assignment vector `21345671111111`):
+
+```bash
+Ripes --mode cli --src stage3.s -t asm --proc RV32_ISS --iret --reginit "gpr:10=2134567,11=1111111"
+```
+
+Output (Ripes prints a NUL after every string, so a terminal may show extra gaps):
+
+```
+[PASS] 21345671111111 : 11 moves: R B' D2 R' B R' B' R D2 R B
+Program exited with code: 0
+===== instructions retired
+7463271
+```
+
+- The first line is printed by the program. `[PASS]` means the path found by the search, replayed move by move on a full 7-cubie model inside the program, ends in the solved cube. The number is the move count and the moves follow in the notation of `solver.c`.
+- The exit code is `0` when the state was solved and `1` otherwise.
+- An invalid state is rejected with `[FAIL] invalid state ...` and exit code `1`. Rejected: a digit outside its range, a repeated cubie, an orientation sum that is not a multiple of 3, or a number of more than seven digits.
+- `--iret` adds the retired instruction count of the whole program, including input decode, printing and exit.
+
+**Run the built-in test cases.** Start without `--reginit` (or load `stage3.s` in the GUI, where `a0` starts at 0). The three inlined cases, the solved cube, the 3-move scramble and the distance-11 vector, are solved and checked against their expected lengths:
+
+```bash
+Ripes --mode cli --src stage3.s -t asm --proc RV32_ISS --iret
+```
+
+It prints three `[PASS]` lines and `all cases passed`, and exits with the number of failed cases. The cases are the `case0` to `case2` strings and the `cases` table at the end of `stage3.s`.
+
+**Pipelined models** work with the same arguments, for example `--proc RV32_5S`, but run about 100 times slower, so a distance-11 state needs minutes. Add `--timeout <ms>` if the default is too short.
+
+**Measure many states.** `measure\measure_stage4.ps1` runs a list of states through exactly this interface and writes `measure\stage4_results.csv`. The switch `-Worst` adds the 20 distance-11 states with the most IDA\* nodes:
+
+```
+powershell -File measure\measure_stage4.ps1 -Ripes C:\path\to\Ripes.exe -Worst
+```
+
 ### 4.1 Design and Constraint Checklist
-- [ ] RV32I only (no M extension, no compiler-generated routines)
-- [ ] No heap, recursion, or floating point
-- [ ] Input: 14-character cube state string (inlined at assembly time)
-- [ ] `.data` + `.bss` + `.rodata` ≤ 128 KiB
+- [x] RV32I only: assembled with `-march=rv32i`, which rejects any M instruction; no call to `__mulsi3` or `__divsi3`
+- [x] No heap, recursion, or floating point (explicit 16-frame array, `call` only to leaf helpers)
+- [x] Input: 14-character states inlined with `.string` (`case0` to `case2`), validated by `parse` (digit ranges, repeated cubies, orientation sum)
+- [x] `.data` + `.bss` + `.rodata` ≤ 128 KiB: 84,120 B in total (all in `.data`, see 4.2)
 
 ### 4.2 Program Structure
-- Data layout (tables / state / stack)
-- Functions and register conventions
-- Main flow (input → search → validate → output)
+
+**Data layout.** Everything is in `.data`, because Ripes 2.2.6 accepts neither `.section`, `.rodata`, `.bss` nor `.space`.
+
+| Item | Bytes |
+|---|---:|
+| `pdb` (153,090 × 4 bit) | 76,545 |
+| `onext` 3 × 1024 × u16 | 6,144 |
+| `lnext` 3 × 256 × u8 | 768 |
+| `source_tbl`, `dest_tbl`, `twist_tbl` (8 B rows) | 72 |
+| move names, messages, test strings, `cases`, `pow10` | ≈ 308 |
+| scratch: `root_st`, `cur_st`, `new_st`, `path`, `frames` (16 × 16 B), `loc_buf`, `num_buf`, `in_buf` | 332 |
+| **Total** | **84,120** |
+
+The three big tables are produced by `tools/gen_stage3_tables.py`, a port of `build_tables()`. The script rewrites the block between the `BEGIN/END GENERATED TABLES` markers. No table covers all 3,674,160 states.
+
+**Frame.** 16 B per depth, addressed with literal offsets because Ripes 2.2.6 mis-assembles `.equ` symbols used as offsets: `0` node orientation index, `2` cursor orientation index, `4` node location index, `5` cursor location index, `6` face, `7` quarter turns done, `8` face of the parent move.
+
+**Functions and registers.**
+- `search(a0 = root)` returns the move count in `a0`, or -1. Registers: `s0` frame pointer, `s1` depth, `s2` bound, `s3`/`s4`/`s5` = `onext`/`lnext`/`pdb`, `s6`/`s8` = root orientation/location index, `s7` = `&path[d]`, `s9` = root, `s10` = constant 3.
+- `quick_solved(a1 = n)`: used when the PDB says h = 0. Then cubies 0 to 2 are home and every orientation is 0, so the cube is solved iff cubies 3 to 6 are home. It follows their slots through `dest_tbl` (the inverse of `source`). Leaf routine.
+- `is_solved(a0 = root, a1 = n)`: full 7-cubie replay (the `quarter_turn` model of `stage3.c`). Used for the independent check in `solve_case`.
+- `parse`, `solve_case`, `put_str`, `put_uint`: input checking and output. Ecalls: 4 = print string, 93 = exit with code.
+- Start-up `_start`: if `a0` is 0 it runs the built-in cases; otherwise it decodes `a0` and `a1` into `in_buf` (see How to Run) and calls `solve_case` with no expected distance.
+
+**Main flow.** For each case (a built-in one, or the one decoded from the registers): `parse`, `search`, compare with the expected distance, replay the path with `is_solved`, then print `[PASS]` or `[FAIL]`, the state, the move count and the moves. The exit code is the number of failed cases. If no solution is found by bound 11, `search` returns -1, so an unreachable input cannot loop forever.
+
+**Ripes notes.** `ecall` is preceded by three `nop`s so that the `a7` value reaches the register file in the pipelined models (a bare `li a7, 4` followed by `ecall` raised "Unknown system call in register a7: 0"). Comments avoid parentheses and square brackets because the Ripes assembler rejects them.
 
 ### 4.3 Iterative Refinement Log
-| Version | Change | `.text` bytes | Retired instr (`--iret`) |
-|---|---|---|---|
-| v0 | Initial version | | |
-| v1 | | | |
-| v2 | | | |
 
-> Conventions: `.text` is the linked size with the renderer compiled out; instruction counts use `--iret` on the pinned Ripes build.
+Retired instructions on `RV32_ISS`. "d11 vector" is `21345671111111`. "worst" is `12347651111111`, the distance-11 state with the most IDA\* nodes (424,243).
+
+| Version | Change | `.text` bytes | d11 vector | worst |
+|---|---|---:|---:|---:|
+| v0 | straight translation; at h = 0 replay the whole path with `is_solved` | 2,048 | 14,810,055 | 48,023,955 |
+| v1 | h = 0 test follows only cubies 3 to 6 through `dest_tbl` (`quick_solved`) | 2,040 | 7,806,090 | 25,640,356 |
+| v2 | constant 3 kept in `s10` for the two tests in the dfs loop | 2,044 | 7,463,027 | 24,509,105 |
+| v3 | state read from `a0`/`a1` through `--reginit` instead of an inlined string; same search | 2,176 | 7,463,271 | 24,509,349 |
+
+- v0 to v1: 46.6 % fewer on the worst state. The h = 0 test ran 8,537 times on this state and replayed 82,583 moves in total (host count). Removing the replay saved 22.4 M instructions, about 270 per replayed move, so most of v0 was this check.
+- v1 to v2: 4.4 % fewer on the worst state and 4.4 % fewer on the vector.
+- v2 to v3: 244 instructions more on every state, the decimal-to-string decode of the input. v0 to v2 were measured with the state edited into the source; from v3 on, every number is measured through `--reginit`.
+- The node count is the same in all versions (424,243 on the worst state), so every change is a change in cost per node. v3 spends 24,509,349 / 424,243, about 57.8 instructions per node, including the h = 0 checks.
 
 ### 4.4 Comparison with the GCC Reference
-- Build command: `riscv64-unknown-elf-gcc -O2 -march=rv32i -mabi=ilp32`
 
-| | Retired instr | Code size |
-|---|---|---|
-| GCC reference | | |
-| This implementation | | |
+Build command: `riscv64-unknown-elf-gcc -O2 -march=rv32i -mabi=ilp32 -mno-relax -nostdlib -static` (GCC 10.2.0, libgcc `rv32i/ilp32`; `measure/build_ref.sh`). The source is `ref/stage3_ref.c`: the search of `stage3.c` with the same tables (`tools/gen_stage3_tables.py --c`), a compile-time state, no printing, and a byte-loop `memcpy` because there is no rv32i libc (GCC lowers the `state_t` copy in `is_solved_after` to a call). The binary links `__divsi3`, `__modsi3`, `__udivsi3` and `__umodsi3`, which `% 3`, `m / 3` and `m % 3` need without an M extension. Counts come from `measure/measure_ref.ps1` on the same Ripes build.
+
+| Program | d11 vector | worst | `.text` bytes |
+|---|---:|---:|---:|
+| GCC `-O2`, algorithm of `stage3.c` | 23,580,300 | 76,231,639 | 1,652 |
+| GCC `-O2` with the `quick_solved` test (`-DQUICK`) | 8,622,122 | 28,325,779 | 1,820 |
+| `stage3.s` (v3) | 7,463,271 | 24,509,349 | 2,176 |
+
+- Against plain GCC the assembly retires 68.4 % fewer instructions on the vector and 67.8 % fewer on the worst state. Plain GCC is above the 5×10⁷ budget on the worst state; the assembly is below it.
+- Most of that gap is the algorithm, not the code generation. GCC pays for the full replay through libgcc `%` and `/` calls, while `stage3.s` uses `quick_solved`. To isolate code generation, the `-DQUICK` row gives the compiler the same test. Against it the assembly retires 13.4 % fewer on the vector and 13.5 % fewer on the worst state.
+- The assembly is 356 to 524 bytes larger in `.text`. The programs are not identical: `stage3.s` also contains `parse` validation, the CLI decode, the full-model replay and the printing code, none of which is in the reference.
+- The assembly's solved-cube run costs 837 instructions against 365 for the `-DQUICK` reference. The difference, 472 instructions, is the input decode, the parsing checks and the printing, and it is included in every assembly number above.
 
 ### 4.5 Correctness Tests
 | ID | Description | Result |
@@ -456,19 +495,21 @@ gcc -O2 -Wall -o stage2 stage2.c && gcc -O2 -Wall -o stage3 stage3.c
 | H2 | All tables fully populated; maximum value and solved entry checked | PASS: PDB 153,090 entries, none unset, max 9, only index 0 (solved) is 0; `onext`/`lnext` rows are permutations with zero padding; both agree with the full 7-cubie model on 3,674,160 × 3 transitions |
 | H3 | Search returns the optimal length for every state | PASS: 3,674,160 states, 0 wrong, 111.2 s (host, `./stage3 --full`) |
 | H4 | Packed accessor agrees with unpacked reference | PASS: 76,545 even + 76,545 odd indices, 0 mismatches |
-| T5 | Applying the returned path reaches the solved state on Ripes | |
-| T6 | `21345671111111` returns an 11-move optimal solution | |
-| T7 | Three test cases reproduce on RV32_ISS and at least one visual pipeline model | |
+| T5 | Applying the returned path reaches the solved state | PASS on Ripes `RV32_ISS`: all 2,644 distance-11 states (`measure/all_d11_iret.csv`) plus the 8 states of other depths (0, 3, 8, 8, 8, 9, 9, 10) in `measure/stage4_results.csv`, each run alone through `--reginit`, each checked against its expected length and replayed on the full model by the program itself. Also PASS under qemu-riscv32 (`tools/qemu_test.sh`) on all 2,644 distance-11 states plus 2,508 random others (5,152 states), every length equal to the BFS distance |
+| T6 | `21345671111111` returns an 11-move optimal solution | PASS: `R B' D2 R' B R' B' R D2 R B`, 11 moves; the program compares the length with the expected 11 and replays the path |
+| T7 | Three test cases reproduce on RV32_ISS and at least one visual pipeline model | `RV32_ISS`: all three PASS in one run without `--reginit`, and each one also PASSes alone through `--reginit`. `RV32_5S` on Ripes v2.2.6: cases 1 and 2 PASS, case 3 did not finish within a 60 s timeout (that model runs about 0.13 M instructions per second). A full three-case run on a pipeline model is still to do |
 
 #### Test Cases
-1. Solved cube: `TODO`
-2. Short scramble: `TODO`
-3. Distance-11 state: `21345671111111`
+1. Solved cube: `12345671111111`, expected 0 moves, 837 instructions
+2. Short scramble, 3 moves: `23475162132323`, expected 3 moves (`D' B R'`), 2,884 instructions
+3. Distance-11 state: `21345671111111`, expected 11 moves, 7,463,271 instructions
+
+More states measured, with the expected length taken from `tests/solutions.txt`: `62345713133111` (8), `24316572122213` (8), `25713642221111` (8), `24513763133333` (9), `43752611332133` (9), `25416373331111` (10), and the second-worst state `61352472313211` (11).
 
 ### 4.6 Pass Conditions
-- [ ] Static data ≤ 128 KiB: `TODO`
-- [ ] Every distance-11 state ≤ 5×10⁷ retired instructions on RV32_ISS: `TODO`
-- [ ] Instruction count for `21345671111111` (reported separately): `TODO`
+- [x] Static data ≤ 128 KiB: 84,120 B (all `.data`; 83,457 B of it are the tables)
+- [x] Every distance-11 state ≤ 5×10⁷ retired instructions on RV32_ISS: all 2,644 distance-11 states were run on `RV32_ISS` through `--reginit` (`measure/measure_all_d11.ps1`, data in `measure/all_d11_iret.csv`). Every one printed `[PASS]` with 11 moves. Retired instructions: minimum 809,149, mean 2,808,078, **maximum 24,509,349** (`12347651111111`), then 23,789,564 (`61352472313211`) and 20,229,570 (`51342763312223`). No state is above 5×10⁷; the maximum uses 49 % of the budget. The renderer does not exist, so nothing is compiled out. The distance-11 list comes from a host BFS (`measure/all_d11_states.txt`).
+- [x] Instruction count for `21345671111111` (reported separately): 7,463,271
 
 ### 4.7 LED Matrix Visualization
 - Peripheral: 35 × 25, one 32-bit word per LED (24-bit RGB), index `y * WIDTH + x`
@@ -492,8 +533,10 @@ TODO
 ```
 
 ### B. Reproduction Steps
-1. 
-2. 
+1. Run one state or the built-in cases on Ripes: see How to Run in Stage 4.
+2. Regenerate the tables in `stage3.s`: `python tools/gen_stage3_tables.py stage3.s`.
+3. Measure: `powershell -File measure\measure_stage4.ps1 -Ripes <Ripes.exe> -Worst`, then `measure\measure_ref.ps1` for the GCC reference (needs `riscv64-unknown-elf-gcc` in WSL).
+4. Host check of the assembly under qemu: `sh tools/qemu_test.sh <state>...` (needs `riscv64-unknown-elf-as/ld` and `qemu-riscv32`).
 
 ### C. References
 - [Assignment 1 spec](https://hackmd.io/@sysprog/2026-arch-homework1)

@@ -3,7 +3,7 @@
 ###### tags: `computer-architecture` `RISC-V` `Ripes` `minirubik`
 
 > **Due**: 2026-10-08 11:59 (GMT+8)
-> **Fork source**: sysprog21/minirubik (commit: `TODO`)
+> **Fork source**: sysprog21/minirubik 
 > **Ripes version**: v2.2.6-106 (processor model: `RV32_ISS`)
 
 ## Table of Contents
@@ -535,7 +535,14 @@ That is 8 × 6 facelets. A facelet is 4 LEDs wide and 3 tall. Facelets inside on
 
 **What was and was not tested.**
 - Renderer logic, with Ripes CLI: a third variant, DUMP, uses the same `render` but points it at a 35 × 25 word array in memory instead of the LED base address, and prints the array after every frame. `tools\verify_led.ps1 -Ripes <Ripes.exe>` runs 9 states (solved, 3, 8, 9, 10 and 11 moves, including the worst IDA\* cases) and compares every frame, 80 in all, with frames computed by turning 3-D stickers. The check starts from the solved cube, undoes the solution backwards to get the scramble, and confirms that the scramble matches the 14 input digits; all 9 cases pass. Flipping one pixel in the captured output makes the check fail.
-- Not tested: the LED build in the Ripes GUI. The only difference from the DUMP build is the base address and `LED_MATRIX_0_WIDTH` coming from the peripheral instead of from `.equ`; the LED build was assembled and run to completion in the CLI with those three symbols supplied as `.equ`. The pause length was chosen from the CLI speed of about 12 million instructions per second and has not been tuned in the GUI.
+- GUI: the LED build was run in the Ripes GUI with an LED Matrix instantiated at 35 × 25, and the net is drawn and redrawn as expected, see the screenshots below. What is still not established is whether every frame in the GUI equals the host model: the frame-by-frame comparison was done on the DUMP build in the CLI, which differs from the LED build only in the base address and where `LED_MATRIX_0_WIDTH` comes from. The pause length was chosen from the CLI speed of about 12 million instructions per second and has not been tuned for the GUI.
+
+![LED matrix, scrambled cube](media/led_scramble.png)
+![LED matrix, a frame while the first picture is still being drawn](media/led_mid.png)
+![LED matrix, solved cube](media/led_solved.png)
+
+The first image is the scramble, the last is the solved cube with six uniform faces in the L F R B net with U above and D below. The middle image was captured while a redraw was in progress, so it shows a partly drawn frame and not a finished intermediate position.
+
 
 ### 4.8 Ripes Instruction-Level Walkthrough
 
@@ -555,7 +562,12 @@ That is 8 × 6 facelets. A facelet is 4 LEDs wide and 3 tall. Facelets inside on
 
 **Correctness argument.** Register and memory contents after the last instruction (`t4` = 55, byte at `fb + 4` = 40, `a0` = 55) are identical on the ISS and on the 5-stage model, and the cycle difference comes only from stalls and flushes, never from different results.
 
-**Screenshots:** `TODO`, one per row of the table, taken from the Ripes window.
+**Screenshot of the pipeline model.** `RV32_5S` running the solver, one clock cycle frozen: all five stages hold an instruction at once, `slli x6 x5 1` in WB, `add x6 x6 x5` in MEM, `add x7 x8 x5` in EX, `lbu x28 0 x7` in ID and `add x29 x28 x6` in IF. The data memory write enable is low, since none of the instructions in flight stores, and the ALU and register-file multiplexers show the forwarding paths.
+
+![Ripes 5-stage datapath running the solver](media/visual_pipeline.png)
+
+Still to add: one screenshot per row of the table above, taken with `tools/walkthrough.s`.
+
 
 ## Appendix
 

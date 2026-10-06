@@ -378,7 +378,7 @@ gcc -O2 -Wall -o stage2 stage2.c && gcc -O2 -Wall -o stage3 stage3.c
 
 Source: `stage3.s` (one file: code, test data and the generated tables). The state is read from registers given on the Ripes command line, see How to Run. Reference build and measurement scripts: `ref/`, `measure/`, `tools/`.
 
-**Measurement conventions.** Retired instructions come from `Ripes --mode cli --proc RV32_ISS --iret` on Ripes v2.2.6-106-g5b8a616, one state per run (`measure/measure_stage4.ps1` cuts the `cases` table to one entry), so every count is a whole program: start-up, parse, search, replay check, printing, exit. Code size is the `.text` size of the assembled object (`riscv64-unknown-elf-size -A`); there is no renderer, so nothing is compiled out. Static data is the `.data` size of the same object.
+**Measurement conventions.** Retired instructions come from `Ripes --mode cli --proc RV32_ISS --iret` on Ripes v2.2.6-106-g5b8a616, one state per run (`measure/measure_stage4.ps1` cuts the `cases` table to one entry), so every count is a whole program: start-up, parse, search, replay check, printing, exit. Code size is the `.text` size of the assembled object (`riscv64-unknown-elf-size -A`); the measured build is stage5_cli.s, whose renderer is compiled out. Static data is the `.data` size of the same object.
 
 ### How to Run
 
@@ -508,16 +508,34 @@ More states measured, with the expected length taken from `tests/solutions.txt`:
 
 ### 4.6 Pass Conditions
 - [x] Static data ≤ 128 KiB: 84,120 B (all `.data`; 83,457 B of it are the tables)
-- [x] Every distance-11 state ≤ 5×10⁷ retired instructions on RV32_ISS: all 2,644 distance-11 states were run on `RV32_ISS` through `--reginit` (`measure/measure_all_d11.ps1`, data in `measure/all_d11_iret.csv`). Every one printed `[PASS]` with 11 moves. Retired instructions: minimum 809,149, mean 2,808,078, **maximum 24,509,349** (`12347651111111`), then 23,789,564 (`61352472313211`) and 20,229,570 (`51342763312223`). No state is above 5×10⁷; the maximum uses 49 % of the budget. The renderer does not exist, so nothing is compiled out. The distance-11 list comes from a host BFS (`measure/all_d11_states.txt`).
+- [x] Every distance-11 state ≤ 5×10⁷ retired instructions on RV32_ISS: all 2,644 distance-11 states were run on `RV32_ISS` through `--reginit` (`measure/measure_all_d11.ps1`, data in `measure/all_d11_iret.csv`). Every one printed `[PASS]` with 11 moves. Retired instructions: minimum 809,149, mean 2,808,078, **maximum 24,509,349** (`12347651111111`), then 23,789,564 (`61352472313211`) and 20,229,570 (`51342763312223`). No state is above 5×10⁷; the maximum uses 49 % of the budget. The measured build is `stage5_cli.s`, in which the renderer is compiled out (see 4.7). The distance-11 list comes from a host BFS (`measure/all_d11_states.txt`).
 - [x] Instruction count for `21345671111111` (reported separately): 7,463,271
 
 ### 4.7 LED Matrix Visualization
-- Peripheral: 35 × 25, one 32-bit word per LED (24-bit RGB), index `y * WIDTH + x`
-- Symbols: `LED_MATRIX_0_BASE` / `_WIDTH` / `_HEIGHT`
-- Unfolded net on a 4×3 face grid (6 slots used); facelets 4×3 px with separators (35 wide × 20 tall)
-- Redraw after every solver move (not a pre-recorded animation); distinguishable face colors
-- Assembler switch: `.equ RENDER, 0` with `.if RENDER`
-- State that the GUI build (animated) and CLI build (measured) differ only in the renderer
+
+**Setup in Ripes.** Open the I/O tab, add an LED Matrix and set Width to 35 and Height to 25 (the panel lists Height above Width; 35 × 25 is also the peripheral's default). Load `stage5_led.s`, choose `RV32_ISS`, run. With no register input the three built-in cases are solved in turn, and each is drawn as it is solved.
+
+**Addressing.** One 32-bit word per LED, 0x00RRGGBB, row-major: the LED at (x, y) is the word at `LED_MATRIX_0_BASE + 4 * (y * WIDTH + x)`. This is the layout `examples/C/leds.c` uses; the column-major formula in the peripheral's own description is wrong. The code uses the symbols `LED_MATRIX_0_BASE` and `LED_MATRIX_0_WIDTH` and no literal address. Because RV32I has no multiply, `y * WIDTH` is a loop that adds `4 * WIDTH` once per row.
+
+**Layout.** The cube is an unfolded net in a 4 × 3 grid of face slots, six of them used:
+
+```
+        U
+      L F R B
+        D
+```
+
+That is 8 × 6 facelets. A facelet is 4 LEDs wide and 3 tall. Facelets inside one face touch; faces are one dark LED apart. Width is 8 × 4 + 3 = 35, height is 6 × 3 + 2 = 20, so rows 20 to 24 stay dark. LED x of facelet column `fx` is `4 * fx + fx / 2`, LED y of facelet row `fy` is `3 * fy + fy / 2`. Colours: U white, D yellow, F green, B blue, R red, L orange (`0xFFFFFF`, `0xFFFF00`, `0x00B000`, `0x0000FF`, `0xFF0000`, `0xFF7000`).
+
+**From solver state to pixels.** The solver state is `p[7]`, `o[7]` for the seven movable corners; the corner at position 0 never moves. The orientation digit `o` is the index of the corner's U/D sticker among the three faces of its position, counted clockwise as seen from outside the corner, starting from the U/D face. For the cubie `C` at position `q` with orientation `o`, face index `k` shows the colour of sticker `(k - o) mod 3` of `C`. Three small tables (`xy_tbl`, `colour_tbl`, `colors`) hold this; `tools/led_ref.c tables` generates them. The same program first checks, on 3000 random scrambles, that rotating 24 stickers in 3-D reproduces the `source` and `twist` tables of `solver.c`, which is how the sign of `o` was fixed rather than guessed.
+
+**Driven by the solver.** After `search` returns `n` moves in `path`, `animate` loops `k = 0 .. n`: it calls the existing `is_solved` to replay the first `k` moves into `cur_st`, then `render` draws `cur_st`, then a pause (`li t0, 3000000`, about 6 million instructions) lets the frame be seen. Frame 0 is the scramble, frame `n` is the solved cube, and each frame in between differs from the last by one move, so the corners can be followed to their home positions. Nothing is recorded in advance.
+
+**One source, two builds.** Ripes 2.2.6-106 rejects `.if`, `.else` and `.endif` (`Unknown directive '.if'`), so the assemble-time switch is a pre-assembly filter instead of `.equ RENDER, 0`. `stage5.s` is the master; `tools/variants.ps1` resolves the `#ifdef LED` blocks and writes `stage5_cli.s` and `stage5_led.s`, both plain files that Ripes assembles. **The two builds differ only in the renderer**: the `animate` and `render` code, the LED tables, and one `call animate` in `solve_case`. `stage5_cli.s` is `stage3.s` with a longer header comment, line for line (`diff` shows nothing else), and `measure_stage4.ps1 -Src stage5_cli.s` gives the same retired-instruction counts as `measure\stage4_results.csv` for all 11 base states (7,463,271 for `21345671111111`). The LED build cannot be measured with `--iret`, since `LED_MATRIX_0_BASE` is undefined under `--mode cli`.
+
+**What was and was not tested.**
+- Renderer logic, with Ripes CLI: a third variant, DUMP, uses the same `render` but points it at a 35 × 25 word array in memory instead of the LED base address, and prints the array after every frame. `tools\verify_led.ps1 -Ripes <Ripes.exe>` runs 9 states (solved, 3, 8, 9, 10 and 11 moves, including the worst IDA\* cases) and compares every frame, 80 in all, with frames computed by turning 3-D stickers. The check starts from the solved cube, undoes the solution backwards to get the scramble, and confirms that the scramble matches the 14 input digits; all 9 cases pass. Flipping one pixel in the captured output makes the check fail.
+- Not tested: the LED build in the Ripes GUI. The only difference from the DUMP build is the base address and `LED_MATRIX_0_WIDTH` coming from the peripheral instead of from `.equ`; the LED build was assembled and run to completion in the CLI with those three symbols supplied as `.equ`. The pause length was chosen from the CLI speed of about 12 million instructions per second and has not been tuned in the GUI.
 
 ### 4.8 Ripes Instruction-Level Walkthrough
 - Signals: register write enable, multiplexer selection
@@ -536,7 +554,7 @@ TODO
 1. Run one state or the built-in cases on Ripes: see How to Run in Stage 4.
 2. Regenerate the tables in `stage3.s`: `python tools/gen_stage3_tables.py stage3.s`.
 3. Measure: `powershell -File measure\measure_stage4.ps1 -Ripes <Ripes.exe> -Worst`, then `measure\measure_ref.ps1` for the GCC reference (needs `riscv64-unknown-elf-gcc` in WSL).
-4. Host check of the assembly under qemu: `sh tools/qemu_test.sh <state>...` (needs `riscv64-unknown-elf-as/ld` and `qemu-riscv32`).
+. LED renderer: `powershell -File toolsvariants.ps1` writes `stage5_cli.s` and `stage5_led.s` from `stage5.s`; `powershell -File toolsverify_led.ps1 -Ripes <Ripes.exe>` checks every frame, needs gcc.
 
 ### C. References
 - [Assignment 1 spec](https://hackmd.io/@sysprog/2026-arch-homework1)

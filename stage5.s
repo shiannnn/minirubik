@@ -651,7 +651,7 @@ an_loop:
 #ifdef DUMP
         call    dump_fb
 #else
-        li      t0, 3000000             # pause so each move can be seen
+        li      t0, 1000                # pause between frames
 an_wait:
         addi    t0, t0, -1
         bnez    t0, an_wait

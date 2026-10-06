@@ -538,10 +538,24 @@ That is 8 × 6 facelets. A facelet is 4 LEDs wide and 3 tall. Facelets inside on
 - Not tested: the LED build in the Ripes GUI. The only difference from the DUMP build is the base address and `LED_MATRIX_0_WIDTH` coming from the peripheral instead of from `.equ`; the LED build was assembled and run to completion in the CLI with those three symbols supplied as `.equ`. The pause length was chosen from the CLI speed of about 12 million instructions per second and has not been tuned in the GUI.
 
 ### 4.8 Ripes Instruction-Level Walkthrough
-- Signals: register write enable, multiplexer selection
-- Pipeline stages: IF / ID / EX / MEM / WB
-- Memory updates and correctness argument
-- Screenshots / video link: `TODO`
+
+**Program.** `tools/walkthrough.s`, 25 instructions, built from the patterns `stage5_led.s` depends on. It was run on `RV32_ISS` and on `RV32_5S` and exits with code 55 on both, so the pipelined model computes the same result. `RV32_ISS` retires 25 instructions in 25 cycles; `RV32_5S` retires the same 25 instructions in 36 cycles, the difference being pipeline fill, the load-use stall and branch flushes.
+
+**How to reproduce.** Processor tab: `RV32_5S`. Load `tools/walkthrough.s`, assemble, press Step once per clock cycle and read the signals on the datapath.
+
+| # | Instruction | What to show | Expected signals |
+| :-- | :-- | :-- | :-- |
+| 1 | `slli t1, t0, 1` then `add t1, t1, t0` | shift-and-add multiply, forwarding | `RegWrite` = 1; ALU operand B selects the immediate for `slli` and the register for `add`; the `add` takes `t1` from the forwarding unit, no stall |
+| 2 | `lbu t3, 0(t2)` then `add t4, t3, t1` | load-use hazard | `MemRead` = 1; write-back mux selects memory data; the `add` waits one cycle in ID, a bubble enters EX |
+| 3 | `sw t4, 0(s1)`, `sb t3, 4(s1)` | memory update | `RegWrite` = 0, `MemWrite` = 1; the Memory tab at `fb` shows 55, then 40 at `fb + 4` |
+| 4 | `bnez t5, loop` | taken branch | the PC mux selects the branch target; instructions fetched behind the branch are flushed; not taken on the third pass, PC + 4 |
+| 5 | `lw a0, 0(s1)` | read back | `a0` = 55, which is the exit code |
+
+**Per-stage view of one instruction**, `lbu t3, 0(t2)`: IF fetches it at PC; ID reads `t2` and sign-extends the offset 0; EX computes `t2 + 0`; MEM reads one byte and zero-extends it; WB writes 40 into `t3`.
+
+**Correctness argument.** Register and memory contents after the last instruction (`t4` = 55, byte at `fb + 4` = 40, `a0` = 55) are identical on the ISS and on the 5-stage model, and the cycle difference comes only from stalls and flushes, never from different results.
+
+**Screenshots:** `TODO`, one per row of the table, taken from the Ripes window.
 
 ## Appendix
 

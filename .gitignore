@@ -6,3 +6,5 @@ mini
 stage2
 stage3
 *.exe
+measure/ratio_results.csv
+measure/rate_*.csv

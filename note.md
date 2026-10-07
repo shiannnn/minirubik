@@ -95,11 +95,11 @@ The queue exists only to name the BFS frontier. Because Ripes stores guest memor
 
 ### 1.2 Measurements
 
-**Setup.** Ripes CLI build `D:\Ripes\Ripes.exe` (build dated 2026-10-03; record the pinned version:  v2.2.6-106), Windows 11, CPU: Intel Core i7-10700. Both measurements were produced by a script (`measure/measure.ps1`) that runs `Ripes --mode cli --src <file> -t asm --proc <model> --iret --cycles`, so no value was read or timed by hand. Test programs are `measure/memfill.s` and `measure/spin.s`; the raw data are in `ratio_results.csv` and `rate_results.csv`.
+**Setup.** Ripes CLI build `D:\Ripes\Ripes.exe` (build dated 2026-10-03; record the pinned version:  v2.2.6-106), Windows 11, CPU: Intel Core i7-10700. Both measurements were produced by a script (`measure/measure.ps1`) that runs `Ripes --mode cli --src <file> -t asm --proc <model> --iret --cycles`, so no value was read or timed by hand. `--iret` makes Ripes print the number of retired instructions, i.e. instructions that completed execution (equal to the cycle count on `RV32_ISS`, smaller than it on a pipelined model). Test programs are `measure/memfill.s` and `measure/spin.s`; `measure/measure.ps1` prints the tables below and, when run, writes its raw rows to `ratio_results.csv` and `rate_<model>.csv` next to the script (not committed).
 
 #### 1.2.1 Host-bytes-per-guest-byte ratio
 
-**Method.** `memfill.s` executes one `sb` per byte over a region starting at `0x20000000`, so every written guest byte is a distinct address (3 instructions per byte). It was run on `RV32_ISS` for $N = 0, 1, 2, 4, 8$ MiB, 3 runs each. The script polls the Ripes process every 20 ms and records its peak working set. The $N = 0$ run is the baseline (Ripes start-up).
+**Method.** The ratio is the host memory Ripes gains divided by the guest memory the program writes, so the program must write a *known* amount $N$. `memfill.s` executes one `sb` per byte over a region starting at `0x20000000`, so every written guest byte is a distinct address (3 instructions per byte) and $N$ is exact. It was run on `RV32_ISS` for $N = 0, 1, 2, 4, 8$ MiB, 3 runs each. The script polls the Ripes process every 20 ms and records its peak working set. The $N = 0$ run is the baseline (Ripes start-up).
 
 | Guest bytes written | Peak host working set | (peak − baseline) / N |
 |---:|---:|---:|
@@ -119,10 +119,10 @@ The slope between adjacent sizes is independent of the baseline: 2→4 MiB and 4
 
 | Processor model | Lengths (instr) | Mean time | Rate (instr/s) | Start-up |
 |---|---|---|---:|---:|
-| `RV32_ISS` | 4.0 M / 20.0 M | 0.32 s / 1.37 s | **≈ 15.3 M** | ≈ 0.06 s |
-| `RV32_5S` (5-stage, forwarding + hazard detection) | 0.4 M / 2.0 M | 3.25 s / 15.86 s | **≈ 0.127 M** | ≈ 0.10 s |
+| `RV32_ISS` | 4.0 M / 20.0 M | 0.33 s / 1.49 s | **≈ 13.8 M** | ≈ 0.04 s |
+| `RV32_5S` (5-stage, forwarding + hazard detection) | 0.4 M / 2.0 M | 3.11 s / 15.84 s | **≈ 0.126 M** | ≈ 0 (within noise) |
 
-`RV32_ISS` is about 120× faster than the pipelined model. On `RV32_ISS`, cycles equal retired instructions; on the pipelined model they do not, so the rate is reported in retired instructions, not cycles.
+Repeat-to-repeat variation on `RV32_ISS` is about 10% (an earlier run of the same script gave 15.3 M instr/s); the figures above come from the second run (`measure.ps1 -Test rate`, ISS lengths 2 M / 10 M iterations, 5-stage 0.2 M / 1 M). `RV32_ISS` is about 110× faster than the pipelined model. On `RV32_ISS`, cycles equal retired instructions; on the pipelined model they do not, so the rate is reported in retired instructions, not cycles.
 
 **Caveat on the ISS figure.** `spin.s` never touches memory. The memory-bound loop `memfill.s` ran 25.2 M instructions (8 MiB, 3 per byte) in about 4.15 s, i.e. **≈ 6.1 M instr/s** on `RV32_ISS`. A realistic program that loads and stores heavily sits between the two figures, so both are used in 1.3.
 
@@ -142,11 +142,11 @@ Every allocated byte is eventually written (a `memset` of 3.67 MB up front, then
 
 | Model | Rate used | Estimated run time |
 |---|---:|---:|
-| `RV32_ISS`, memory-free loop (best case) | 15.3 M instr/s | ≈ 65 s |
+| `RV32_ISS`, memory-free loop (best case) | 13.8 M instr/s | ≈ 72 s |
 | `RV32_ISS`, memory-bound loop (closer to baseline) | 6.1 M instr/s | ≈ 165 s |
-| `RV32_5S` | 0.127 M instr/s | ≈ 7,900 s ≈ 2.2 h |
+| `RV32_5S` | 0.126 M instr/s | ≈ 7,900 s ≈ 2.2 h |
 
-**Conclusion.** The full table is not merely slow; it is unusable on the target. On `RV32_ISS` the time is tolerable (one to three minutes), but the memory is not: 1.4 GiB of host memory for 17.5 MiB of guest data, and 140× the 128 KiB budget. On a pipelined model, which the instruction-level walkthrough requires, the same run takes over two hours. The Stage 4 budget of $5 \times 10^7$ retired instructions is about 3 s on `RV32_ISS` at 15.3 M instr/s, but about 6.6 minutes on `RV32_5S`. The design must therefore avoid enumerating the state space and keep only small tables, which motivates Stage 2.
+**Conclusion.** The full table is not merely slow; it is unusable on the target. On `RV32_ISS` the time is tolerable (one to three minutes), but the memory is not: 1.4 GiB of host memory for 17.5 MiB of guest data, and 140× the 128 KiB budget. On a pipelined model, which the instruction-level walkthrough requires, the same run takes over two hours. The Stage 4 budget of $5 \times 10^7$ retired instructions is about 3.6 s on `RV32_ISS` at 13.8 M instr/s, but about 6.6 minutes on `RV32_5S`. The design must therefore avoid enumerating the state space and keep only small tables, which motivates Stage 2.
 
 ## Stage 2: Choose Representation and Algorithm
 

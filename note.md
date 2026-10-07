@@ -455,7 +455,7 @@ powershell -File measure\measure_stage4.ps1 -Ripes C:\path\to\Ripes.exe -Worst
 | `source_tbl`, `dest_tbl`, `twist_tbl` (8 B rows) | 72 |
 | move names, messages, test strings, `cases`, `pow10` | ≈ 308 |
 | scratch: `root_st`, `cur_st`, `new_st`, `path`, `frames` (16 × 16 B), `loc_buf`, `num_buf`, `in_buf` | 332 |
-| **Total** | **84,120** |
+| **Total** | **84,169** |
 
 The three big tables are produced by `tools/gen_stage3_tables.py`, a port of `build_tables()`. The script rewrites the block between the `BEGIN/END GENERATED TABLES` markers. No table covers all 3,674,160 states.
 
@@ -522,7 +522,7 @@ Build command: `riscv64-unknown-elf-gcc -O2 -march=rv32i -mabi=ilp32 -mno-relax 
 More states measured, with the expected length taken from `tests/solutions.txt`: `62345713133111` (8), `24316572122213` (8), `25713642221111` (8), `24513763133333` (9), `43752611332133` (9), `25416373331111` (10), and the second-worst state `61352472313211` (11).
 
 ### 4.6 Pass Conditions
-- [x] Static data ≤ 128 KiB: 84,120 B (all `.data`; 83,457 B of it are the tables)
+- [x] Static data ≤ 128 KiB: 84,169 B (all `.data`; 83,457 B of it are the tables)
 - [x] Every distance-11 state ≤ 5×10⁷ retired instructions on RV32_ISS: all 2,644 distance-11 states were run on `RV32_ISS` through `--reginit` (`measure/measure_all_d11.ps1`, data in `measure/all_d11_iret.csv`). Every one printed `[PASS]` with 11 moves. Retired instructions: minimum 809,149, mean 2,808,078, **maximum 24,509,349** (`12347651111111`), then 23,789,564 (`61352472313211`) and 20,229,570 (`51342763312223`). No state is above 5×10⁷; the maximum uses 49 % of the budget. The measured build is `stage5_cli.s`, in which the renderer is compiled out (see 4.7). The distance-11 list comes from a host BFS (`measure/all_d11_states.txt`).
 - [x] Instruction count for `21345671111111` (reported separately): 7,463,271
 
@@ -586,7 +586,14 @@ Still to add: one screenshot per row of the table above, taken with `tools/walkt
 
 ## 5. AI Disclosure
 
-TODO before submission: write "No AI tools used", or list the tools and what they were used for. State representation, search design, admissibility argument, measurements, optimization reasoning and RV32I assembly must be your own work; AI is allowed only for English refinement.
+AI tools (Claude) were used in this assignment for:
+
+- **Translation and understanding**: translating and explaining the assignment text, the upstream code and reference material.
+- **Writing the documentation**: drafting and revising this note.
+- **Writing part of the code**: parts of the C, assembly and helper scripts in this repository.
+
+I reviewed the AI-assisted parts and can explain them. The measurements in this note were produced by the scripts in `measure/` and `tools/` and were run on my own machine.
+
 
 ## Appendix
 

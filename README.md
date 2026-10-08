@@ -4,6 +4,50 @@ An optimal C99 solver for the 2×2×2 Rubik’s Cube. It builds a breadth-first
 table for all 3,674,160 states and solves every valid position in at most 11
 half-turn-metric moves.
 
+## This fork: Assignment 1, minirubik on RV32I
+
+This fork adds an optimal solver that runs on the [Ripes](https://github.com/mortbopet/Ripes)
+RV32I simulator: IDA\* with a 4-bit pattern database, in hand-written RV32I
+assembly with no multiply, divide, heap or recursion. The full write-up, with
+the design argument and every measurement, is [`note.md`](note.md).
+The upstream solver, `report.md` and the sections below are unchanged.
+
+| Path | Contents |
+| :--- | :--- |
+| `stage2.c` | host IDA\*: pattern database plus permutation heuristic (variant A) |
+| `stage3.c` | host IDA\*: pattern database only, no multiply or divide in the search (variant B); `--verify`, `--full`, `--hcheck`, `--bench` |
+| `stage3.s` | the RV32I program: code, three test cases and the generated tables |
+| `stage5.s` | `stage3.s` plus the LED matrix renderer, with `#ifdef LED` blocks |
+| `stage5_cli.s`, `stage5_led.s` | generated from `stage5.s` by `tools/variants.ps1`; the CLI build is measured, the LED build animates in the GUI |
+| `ref/` | the same search in C for the `gcc -O2 -march=rv32i` reference build |
+| `measure/` | Ripes measurement scripts and their CSV results |
+| `tools/` | table generator, LED reference model and frame check, qemu test, pipeline walkthrough program |
+| `media/` | LED matrix and pipeline screenshots |
+
+Run on Ripes (a build with the `RV32_ISS` model; v2.2.6-106-g5b8a616 was used):
+
+```sh
+Ripes --mode cli --src stage3.s -t asm --proc RV32_ISS --iret
+Ripes --mode cli --src stage3.s -t asm --proc RV32_ISS --iret --reginit "gpr:10=2134567,11=1111111"
+```
+
+The first command solves the three built-in cases (solved, a 3-move scramble,
+`21345671111111`) and checks each result inside the program. The second solves
+one state, given as its first and last seven digits in `a0` and `a1`. For the
+LED animation, load `stage5_led.s` in the GUI with a 35 × 25 LED Matrix.
+
+Host checks:
+
+```sh
+gcc -O2 -Wall -o stage3 stage3.c
+./stage3 --full     # optimal length for all 3,674,160 states
+./stage3 --hcheck   # heuristic admissibility
+```
+
+Results on `RV32_ISS`: 84,169 bytes of static data, at most 24,509,349 retired
+instructions over all 2,644 distance-11 states, and 7,463,271 for
+`21345671111111`.
+
 ## Why a cube is a graph
 
 Ernő Rubik created the original cube in 1974 to demonstrate how parts can move
